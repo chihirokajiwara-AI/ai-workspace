@@ -5,7 +5,7 @@
 
 set -e
 
-GITHUB_USER="chihirokajiwara-AI"
+GITHUB_USER="aesthetic-inc"
 DEV_DIR="$HOME/dev"
 
 # Colors for output
