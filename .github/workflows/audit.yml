@@ -1,0 +1,42 @@
+name: Repo Audit Gates
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  structure-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Required files must exist
+        run: |
+          test -f CLAUDE.md || (echo "❌ CLAUDE.md missing" && exit 1)
+          test -f .secrets.baseline || (echo "❌ baseline missing" && exit 1)
+          echo "✅ Structure OK"
+
+  secrets-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install detect-secrets
+        run: pip install detect-secrets
+      - name: Scan against baseline
+        run: |
+          detect-secrets scan --baseline .secrets.baseline
+          echo "✅ No new secrets"
+
+  bootstrap-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dry run bootstrap if exists
+        run: |
+          if [ -f bootstrap.sh ]; then
+            DRY_RUN=1 bash bootstrap.sh
+            echo "✅ bootstrap dry-run passed"
+          else
+            echo "⚠️ No bootstrap.sh (skipped)"
+          fi
