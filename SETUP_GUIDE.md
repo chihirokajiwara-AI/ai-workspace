@@ -11,13 +11,13 @@
 ### 1. 全プロジェクトをクローン
 
 ```bash
-curl -sL https://raw.githubusercontent.com/chihirokajiwara-AI/ai-workspace/main/bootstrap.sh | bash
+curl -sL https://raw.githubusercontent.com/aesthetic-inc/ai-workspace/main/bootstrap.sh | bash
 ```
 
 ### 2. sync.shをダウンロード
 
 ```bash
-curl -sL https://raw.githubusercontent.com/chihirokajiwara-AI/ai-workspace/main/sync.sh -o ~/dev/sync.sh
+curl -sL https://raw.githubusercontent.com/aesthetic-inc/ai-workspace/main/sync.sh -o ~/dev/sync.sh
 chmod +x ~/dev/sync.sh
 ```
 
