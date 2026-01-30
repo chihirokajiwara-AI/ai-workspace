@@ -115,7 +115,32 @@ cmd_stop(){
   ok "Next: dev up 1"
 }
 
+# ============================================
+# doctor (healthcheck)
+# ============================================
+cmd_doctor(){
+  echo "=== DevOS doctor ==="
+
+  echo -n "git: "; command -v git >/dev/null && echo "OK" || echo "MISSING"
+  echo -n "gh:  "; command -v gh  >/dev/null && echo "OK" || echo "MISSING"
+  echo -n "jq:  "; command -v jq  >/dev/null && echo "OK" || echo "MISSING"
+
+  echo -n "gh auth: "
+  gh auth status >/dev/null 2>&1 && echo "OK" || echo "LOGIN REQUIRED"
+
+  echo -n "dev-journal: "
+  [ -d "$HOME/dev/dev-journal/.git" ] && echo "OK" || echo "NOT CLONED"
+
+  echo -n "sessions: "
+  if [ -f "$HOME/dev/dev-journal/state/ACTIVE_SESSIONS.json" ]; then
+    jq '.sessions|length' "$HOME/dev/dev-journal/state/ACTIVE_SESSIONS.json"
+  else
+    echo "0"
+  fi
+}
+
 case "${1:-}" in
+  doctor) cmd_doctor ;;
   up)     cmd_up "$2" ;;
   stop)   cmd_stop ;;
   list)   cmd_list ;;
