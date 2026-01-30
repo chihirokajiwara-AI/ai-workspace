@@ -35,7 +35,7 @@ journal_push(){
 
 usage(){
   cat <<USAGE
-DevOS v1.3 FINAL
+DevOS v1.4
 
 Start:
   dev up 1     ← 毎朝これだけ
@@ -61,7 +61,7 @@ cmd_up(){
   [ "$COUNT" -eq 0 ] && die "セッションなし。まずどこかで dev stop を1回実行"
 
   CHOICE="${1:-}"
-  [ -z "$CHOICE" ] && die "Claude Codeでは必ず番号指定: dev up 1"
+  [ -z "$CHOICE" ] && CHOICE=1
 
   IDX=$((CHOICE-1))
   REPO=$(jq -r ".sessions[$IDX].repo" "$JOURNAL/state/ACTIVE_SESSIONS.json")
