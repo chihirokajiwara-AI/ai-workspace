@@ -1,439 +1,123 @@
 #!/bin/bash
 set -eo pipefail
 
-# =========================================================
-# DevOS v1.2.1 FINAL — Claude Code Compatible
-# =========================================================
-
 ORG="aesthetic-inc"
 DEV="$HOME/dev"
 JOURNAL="$DEV/dev-journal"
 SESSION_FLAG="$HOME/.devos_active"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+die(){ echo "❌ $*" >&2; exit 1; }
+ok(){ echo "✅ $*"; }
+warn(){ echo "⚠️  $*"; }
 
-die() { echo -e "${RED}ERROR:${NC} $*" >&2; exit 1; }
-ok()  { echo -e "${GREEN}✅${NC} $*"; }
-warn(){ echo -e "${YELLOW}⚠️${NC} $*"; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "$1 が必要です"; }
 
-need_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "Missing: $1"
-}
+now(){ TZ=Asia/Tokyo date +"%Y-%m-%d_%H-%M-%S"; }
 
-now_jst() {
-  TZ=Asia/Tokyo date +"%Y-%m-%d_%H-%M-%S"
-}
-
-ensure_journal() {
+ensure_journal(){
   mkdir -p "$DEV"
-
   if [ ! -d "$JOURNAL/.git" ]; then
-    echo "Cloning dev-journal..."
     cd "$DEV"
-    gh repo clone "$ORG/dev-journal" 2>/dev/null \
-      || git clone "https://github.com/$ORG/dev-journal.git"
+    gh repo clone "$ORG/dev-journal" "$JOURNAL" || die "dev-journal clone失敗"
   fi
-
   cd "$JOURNAL"
   git pull --rebase 2>/dev/null || true
-
   mkdir -p state logs snapshots
-
-  [ -f state/REPOS.json ] || cat > state/REPOS.json <<'EOF'
-{
-  "org": "aesthetic-inc",
-  "repos": [
-    "dev-standards",
-    "space-rental-platform",
-    "clawd",
-    "mf-cloud-auth",
-    "chatgpt-export",
-    "edilab-line-platform",
-    "ai-workspace",
-    "repo-template"
-  ]
-}
-EOF
-
-  [ -f state/LAST_SESSION.json ] || cat > state/LAST_SESSION.json <<'EOF'
-{"timestamp":null,"repo":null,"branch":null,"head":null,"snapshot":null,"open_pr":null}
-EOF
-
-  [ -f state/ACTIVE_SESSIONS.json ] || cat > state/ACTIVE_SESSIONS.json <<'EOF'
-{"sessions":[]}
-EOF
+  [ -f state/ACTIVE_SESSIONS.json ] || echo '{"sessions":[]}' > state/ACTIVE_SESSIONS.json
 }
 
-journal_push() {
+journal_push(){
   cd "$JOURNAL"
   git add -A
   git commit -m "session: update" 2>/dev/null || true
-  git push || die "Journal push failed. Session NOT saved."
+  git push || die "journal push失敗（保存されていない）"
 }
 
-repo_root() {
-  git rev-parse --show-toplevel 2>/dev/null || die "Not in a git repo"
+usage(){
+  cat <<USAGE
+DevOS v1.3 FINAL
+
+Start:
+  dev up 1     ← 毎朝これだけ
+
+End:
+  dev stop     ← 絶対これだけ
+USAGE
 }
 
-usage() {
-  cat <<EOF
-DevOS v1.2.1 — Claude Code Compatible
-
-Commands:
-  dev doctor       Check dependencies
-  dev sync         Clone/pull all repos
-  dev status       Show all repos state
-  dev list         Show recent sessions (for pick)
-  dev pick [N]     Pick session N (or interactive if no arg)
-  dev start        Resume last session
-  dev stop         Save session
-  dev apply        Apply saved patch
-
-Human workflow:
-  Start: dev list → dev pick 1
-  End:   dev stop
-EOF
+cmd_list(){
+  need jq; ensure_journal
+  echo "=== Sessions ==="
+  jq -r '.sessions[:10] | to_entries[] |
+    "\(.key+1)) \(.value.timestamp)  \(.value.repo) @ \(.value.branch)"' \
+    "$JOURNAL/state/ACTIVE_SESSIONS.json" || true
 }
 
-# ============================================
-# doctor
-# ============================================
-cmd_doctor() {
-  echo -e "${YELLOW}=== dev doctor ===${NC}"
-
-  echo -n "git: "
-  command -v git >/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-
-  echo -n "gh: "
-  command -v gh >/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-
-  echo -n "jq: "
-  command -v jq >/dev/null && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
-
-  echo -n "gh auth: "
-  gh auth status >/dev/null 2>&1 && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗ Run: gh auth login${NC}"
-
+cmd_up(){
+  need jq; need gh
   ensure_journal
 
-  echo -n "dev-journal: "
-  [ -d "$JOURNAL/.git" ] && echo -e "${GREEN}✓${NC}" || echo -e "${RED}✗${NC}"
+  COUNT=$(jq '.sessions|length' "$JOURNAL/state/ACTIVE_SESSIONS.json")
+  [ "$COUNT" -eq 0 ] && die "セッションなし。まずどこかで dev stop を1回実行"
 
-  ok "doctor complete"
-}
+  CHOICE="${1:-}"
+  [ -z "$CHOICE" ] && die "Claude Codeでは必ず番号指定: dev up 1"
 
-# ============================================
-# sync
-# ============================================
-cmd_sync() {
-  need_cmd jq
-  ensure_journal
+  IDX=$((CHOICE-1))
+  REPO=$(jq -r ".sessions[$IDX].repo" "$JOURNAL/state/ACTIVE_SESSIONS.json")
+  BRANCH=$(jq -r ".sessions[$IDX].branch" "$JOURNAL/state/ACTIVE_SESSIONS.json")
 
-  echo -e "${YELLOW}=== dev sync ===${NC}"
-
-  REPOS=$(jq -r '.repos[]' "$JOURNAL/state/REPOS.json")
-
-  for r in $REPOS; do
-    echo "=== $r ==="
-    if [ ! -d "$DEV/$r/.git" ]; then
-      cd "$DEV"
-      gh repo clone "$ORG/$r" 2>/dev/null || git clone "https://github.com/$ORG/$r.git"
-    else
-      cd "$DEV/$r"
-      git checkout main 2>/dev/null || true
-      git pull 2>/dev/null || true
-    fi
-  done
-
-  ok "all repos synced"
-}
-
-# ============================================
-# status
-# ============================================
-cmd_status() {
-  need_cmd jq
-  ensure_journal
-
-  echo -e "${YELLOW}=== dev status ===${NC}"
-
-  REPOS=$(jq -r '.repos[]' "$JOURNAL/state/REPOS.json")
-
-  echo ""
-  echo "Repositories:"
-  for r in $REPOS; do
-    if [ -d "$DEV/$r/.git" ]; then
-      b=$(git -C "$DEV/$r" branch --show-current 2>/dev/null || echo "?")
-      d=$(git -C "$DEV/$r" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
-      echo "  $r: $b (dirty: $d)"
-    else
-      echo "  $r: [not cloned]"
-    fi
-  done
-
-  echo ""
-  echo "Last session:"
-  jq -r '"  \(.repo // "none") @ \(.branch // "-")"' "$JOURNAL/state/LAST_SESSION.json"
-
-  [ -f "$SESSION_FLAG" ] && warn "SESSION ACTIVE - run: dev stop"
-}
-
-# ============================================
-# list (show sessions for pick)
-# ============================================
-cmd_list() {
-  need_cmd jq
-  ensure_journal
-
-  echo -e "${YELLOW}=== Recent Sessions ===${NC}"
-  echo ""
-
-  COUNT=$(jq '.sessions | length' "$JOURNAL/state/ACTIVE_SESSIONS.json")
-
-  if [ "$COUNT" -eq 0 ]; then
-    echo "No sessions found yet (first run is normal)."
-    echo "Next: run 'dev stop' once in any repo to create a session."
-    return 0
-  fi
-
-  jq -r '
-    .sessions[:10]
-    | to_entries[]
-    | "\(.key+1)) \(.value.timestamp)  \(.value.repo) @ \(.value.branch)"
-  ' "$JOURNAL/state/ACTIVE_SESSIONS.json"
-
-  echo ""
-  echo "To resume: dev pick [number]"
-  echo "Example:   dev pick 1"
-}
-
-# ============================================
-# pick (with argument support for Claude Code)
-# ============================================
-cmd_pick() {
-  need_cmd jq
-  ensure_journal
-
-  local CHOICE="${1:-}"
-
-  COUNT=$(jq '.sessions | length' "$JOURNAL/state/ACTIVE_SESSIONS.json")
-
-  if [ "$COUNT" -eq 0 ]; then
-    warn "No sessions. Running dev start..."
-    cmd_start
-    return
-  fi
-
-  # If no argument, show list and ask (interactive mode)
-  if [ -z "$CHOICE" ]; then
-    echo -e "${YELLOW}=== dev pick ===${NC}"
-    echo ""
-    jq -r '
-      .sessions[:10]
-      | to_entries[]
-      | "\(.key+1)) \(.value.timestamp)  \(.value.repo) @ \(.value.branch)"
-    ' "$JOURNAL/state/ACTIVE_SESSIONS.json"
-    echo ""
-
-    # Try interactive read (may fail in Claude Code)
-    if read -p "Enter number (1-10) > " CHOICE 2>/dev/null; then
-      : # got input
-    else
-      echo ""
-      echo "Non-interactive mode detected."
-      echo "Usage: dev pick [number]"
-      echo "Example: dev pick 1"
-    return 0
-    fi
-  fi
-
-  # Validate choice
-  if ! [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
-    die "Invalid input: $CHOICE"
-  fi
-
-  INDEX=$((CHOICE - 1))
-
-  REPO=$(jq -r ".sessions[$INDEX].repo // empty" "$JOURNAL/state/ACTIVE_SESSIONS.json")
-  BRANCH=$(jq -r ".sessions[$INDEX].branch // empty" "$JOURNAL/state/ACTIVE_SESSIONS.json")
-  SNAP=$(jq -r ".sessions[$INDEX].snapshot // empty" "$JOURNAL/state/ACTIVE_SESSIONS.json")
-
-  [ -z "$REPO" ] && die "Session $CHOICE not found"
-
-  ok "Selected: $REPO @ $BRANCH"
-
-  # Update LAST_SESSION
-  cat > "$JOURNAL/state/LAST_SESSION.json" <<EOF
-{
-  "timestamp": "$(now_jst)",
-  "repo": "$REPO",
-  "branch": "$BRANCH",
-  "snapshot": "$SNAP",
-  "open_pr": null
-}
-EOF
-
-  journal_push
-
-  echo ""
-  cmd_start
-}
-
-# ============================================
-# start (resume)
-# ============================================
-cmd_start() {
-  need_cmd jq
-  ensure_journal
-
-  echo -e "${YELLOW}=== dev start ===${NC}"
-
-  REPO=$(jq -r '.repo // empty' "$JOURNAL/state/LAST_SESSION.json")
-  BRANCH=$(jq -r '.branch // empty' "$JOURNAL/state/LAST_SESSION.json")
-  SNAP=$(jq -r '.snapshot // empty' "$JOURNAL/state/LAST_SESSION.json")
-
-  [ -z "$REPO" ] && die "No session. Run: dev sync first"
-
-  echo "Resuming: $REPO @ $BRANCH"
+  ok "Resume: $REPO @ $BRANCH"
 
   if [ ! -d "$DEV/$REPO/.git" ]; then
-    echo "Cloning $REPO..."
     cd "$DEV"
-    gh repo clone "$ORG/$REPO" || git clone "https://github.com/$ORG/$REPO.git"
+    gh repo clone "$ORG/$REPO" "$DEV/$REPO" || die "clone失敗"
   fi
 
   cd "$DEV/$REPO"
   git fetch --all --prune 2>/dev/null || true
-
-  if git show-ref --verify --quiet "refs/heads/$BRANCH" 2>/dev/null; then
-    git checkout "$BRANCH" 2>/dev/null || true
-    git pull 2>/dev/null || true
-  elif git show-ref --verify --quiet "refs/remotes/origin/$BRANCH" 2>/dev/null; then
-    git checkout -b "$BRANCH" "origin/$BRANCH" 2>/dev/null || true
-  else
-    warn "Branch $BRANCH not found, using main"
-    git checkout main 2>/dev/null || true
-  fi
+  git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH" || true
 
   touch "$SESSION_FLAG"
-
-  ok "Session started: $REPO @ $BRANCH"
-  echo ""
+  ok "Started. Finish with: dev stop"
   git status --short
-
-  if [ -n "$SNAP" ] && [ -d "$JOURNAL/snapshots/$SNAP" ]; then
-    if [ -s "$JOURNAL/snapshots/$SNAP/diff.patch" ]; then
-      echo ""
-      warn "Uncommitted changes from last session"
-      echo "Run: dev apply"
-    fi
-  fi
-
-  echo ""
-  echo "Open PRs:"
-  gh pr list --limit 3 2>/dev/null || true
 }
 
-# ============================================
-# stop
-# ============================================
-cmd_stop() {
-  need_cmd jq
+cmd_stop(){
+  need jq
 
-  echo -e "${YELLOW}=== dev stop ===${NC}"
-
-  # ✅ FIX: capture work repo BEFORE touching journal
+  # ✅ capture WORK repo BEFORE journal cd
   WORK_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) \
-    || die "Not in a git repo. Run dev stop inside a project repo."
+    || die "プロジェクト内で dev stop を実行してください"
 
   WORK_REPO=$(basename "$WORK_ROOT")
-  WORK_BRANCH=$(git -C "$WORK_ROOT" branch --show-current 2>/dev/null || echo "detached")
-  WORK_HEAD=$(git -C "$WORK_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
-  WORK_DIRTY=$(git -C "$WORK_ROOT" status --porcelain | wc -l | tr -d ' ')
+  WORK_BRANCH=$(git -C "$WORK_ROOT" branch --show-current)
+  WORK_HEAD=$(git -C "$WORK_ROOT" rev-parse --short HEAD)
+  TS=$(now)
 
-  TS=$(now_jst)
-  PR=$(gh pr view --repo "$ORG/$WORK_REPO" --json number --jq '.number' 2>/dev/null || echo "null")
-  [ -z "$PR" ] && PR="null"
-
-  echo "Repo:   $WORK_REPO"
-  echo "Branch: $WORK_BRANCH"
-  echo "HEAD:   $WORK_HEAD"
-  echo "Dirty:  $WORK_DIRTY"
-
-  # Now journal operations are safe
   ensure_journal
 
-  SNAP_ID="${TS}_${WORK_REPO}_${WORK_HEAD}"
-  SNAP_DIR="$JOURNAL/snapshots/$SNAP_ID"
-  mkdir -p "$SNAP_DIR"
+  SNAP="${TS}_${WORK_REPO}_${WORK_HEAD}"
+  DIR="$JOURNAL/snapshots/$SNAP"
+  mkdir -p "$DIR"
 
-  # Save patches from WORK_ROOT (never journal)
-  git -C "$WORK_ROOT" status --porcelain > "$SNAP_DIR/status.txt" 2>/dev/null || true
-  git -C "$WORK_ROOT" diff > "$SNAP_DIR/diff.patch" 2>/dev/null || true
-  git -C "$WORK_ROOT" diff --staged > "$SNAP_DIR/diff_staged.patch" 2>/dev/null || true
-  git -C "$WORK_ROOT" log --oneline -20 > "$SNAP_DIR/log.txt" 2>/dev/null || true
+  git -C "$WORK_ROOT" diff > "$DIR/diff.patch" 2>/dev/null || true
 
-  # Update LAST_SESSION correctly
-  cat > "$JOURNAL/state/LAST_SESSION.json" <<EOF
-{
-  "timestamp": "$TS",
-  "repo": "$WORK_REPO",
-  "branch": "$WORK_BRANCH",
-  "head": "$WORK_HEAD",
-  "snapshot": "$SNAP_ID",
-  "open_pr": $PR
-}
-EOF
-
-  # ACTIVE_SESSIONS append
   tmp=$(mktemp)
-  jq --arg ts "$TS" --arg repo "$WORK_REPO" --arg br "$WORK_BRANCH" --arg head "$WORK_HEAD" --arg snap "$SNAP_ID" \
-    '.sessions = [{"timestamp":$ts,"repo":$repo,"branch":$br,"head":$head,"snapshot":$snap}] + .sessions[:19]' \
+  jq --arg ts "$TS" --arg repo "$WORK_REPO" --arg br "$WORK_BRANCH" --arg snap "$SNAP" \
+    '.sessions=[{"timestamp":$ts,"repo":$repo,"branch":$br,"snapshot":$snap}] + .sessions[:19]' \
     "$JOURNAL/state/ACTIVE_SESSIONS.json" > "$tmp" && mv "$tmp" "$JOURNAL/state/ACTIVE_SESSIONS.json"
 
   journal_push
   rm -f "$SESSION_FLAG"
 
-  ok "Session saved"
-  echo "Snapshot: $SNAP_ID"
+  ok "Saved: $WORK_REPO @ $WORK_BRANCH"
+  ok "Next: dev up 1"
 }
 
-# ============================================
-# apply
-# ============================================
-cmd_apply() {
-  need_cmd jq
-  ensure_journal
-
-  echo -e "${YELLOW}=== dev apply ===${NC}"
-
-  SNAP=$(jq -r '.snapshot // empty' "$JOURNAL/state/LAST_SESSION.json")
-  [ -z "$SNAP" ] && die "No snapshot"
-
-  PATCH="$JOURNAL/snapshots/$SNAP/diff.patch"
-  [ ! -s "$PATCH" ] && die "No patch to apply"
-
-  echo "Applying: $PATCH"
-  git apply "$PATCH" || die "Apply failed. Manual: $PATCH"
-
-  ok "Patch applied"
-  git status --short
-}
-
-# ============================================
-# Main
-# ============================================
 case "${1:-}" in
-  doctor) cmd_doctor ;;
-  sync)   cmd_sync ;;
-  status) cmd_status ;;
-  list)   cmd_list ;;
-  pick)   cmd_pick "$2" ;;
-  start)  cmd_start ;;
+  up)     cmd_up "$2" ;;
   stop)   cmd_stop ;;
-  apply)  cmd_apply ;;
+  list)   cmd_list ;;
   *)      usage ;;
 esac
