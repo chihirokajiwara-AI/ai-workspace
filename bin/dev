@@ -38,7 +38,7 @@ journal_push(){
 
 usage(){
   cat <<USAGE
-DevOS v1.7
+DevOS v1.8
 
 Start:
   dev up 1     ← 毎朝これだけ
@@ -172,16 +172,6 @@ cmd_lang(){
   esac
 }
 
-case "${1:-}" in
-  start)  cmd_start_v17 "" ;;
-  lang)   cmd_lang "$2" ;;
-  doctor) cmd_doctor ;;
-  up)     cmd_up "$2" ;;
-  stop)   cmd_stop_v17 ;;
-  list)   cmd_list ;;
-  *)      usage ;;
-esac
-
 # ============================================
 # v1.7 last project auto-resume (human-safe)
 # ============================================
@@ -240,3 +230,112 @@ cmd_stop_v17(){
     echo "✅ Last project remembered: $proj"
   fi
 }
+
+# ============================================
+# v1.8 multi-project session management (SAFE)
+# ============================================
+
+ACTIVE="$JOURNAL/state/ACTIVE_SESSIONS.json"
+
+# repo別に最新セッションだけ抽出（ts基準）
+get_project_sessions(){
+  jq -r '
+    [.sessions
+      | map(select(.repo != "dev-journal"))
+      | group_by(.repo)
+      | .[]
+      | max_by(.ts)
+    ]
+    | sort_by(.ts)
+    | reverse
+    | .[]
+    | "\(.repo)|\(.branch)|\(.ts)"
+  ' "$ACTIVE" 2>/dev/null
+}
+
+# 一覧表示
+list_last_sessions(){
+  echo "=== Last Sessions ==="
+  local i=1
+  get_project_sessions | while IFS='|' read -r repo branch ts; do
+    echo "$i) $repo @ $branch"
+    i=$((i+1))
+  done
+  echo ""
+  echo "Run: dev start <number or name>"
+}
+
+# index→repo取得
+get_repo_by_index(){
+  local idx="$1"
+  get_project_sessions | sed -n "${idx}p" | cut -d'|' -f1
+}
+
+# repoの最新セッション番号をACTIVEから探す
+get_session_index_for_repo(){
+  local repo="$1"
+  jq -r --arg repo "$repo" '
+    .sessions
+    | to_entries
+    | map(select(.value.repo==$repo))
+    | sort_by(.value.ts) | reverse
+    | .[0].key + 1
+  ' "$ACTIVE"
+}
+
+# v1.8 start
+cmd_start_v18(){
+  ensure_journal
+
+  local arg="${1:-}"
+
+  # 引数なし → 一覧だけ出す
+  if [ -z "$arg" ]; then
+    list_last_sessions
+    return 0
+  fi
+
+  local target_repo=""
+
+  # 数字ならindex選択
+  if [[ "$arg" =~ ^[0-9]+$ ]]; then
+    target_repo=$(get_repo_by_index "$arg")
+    [ -z "$target_repo" ] && echo "❌ Invalid number" && list_last_sessions && return 1
+  else
+    target_repo="$arg"
+  fi
+
+  # repo存在確認
+  if [ ! -d "$DEV/$target_repo/.git" ]; then
+    echo "❌ Project not found: $target_repo"
+    list_last_sessions
+    return 1
+  fi
+
+  # そのrepoの最新セッションIDを取得
+  local sid
+  sid=$(get_session_index_for_repo "$target_repo")
+
+  if [ -z "$sid" ] || [ "$sid" = "null" ]; then
+    echo "❌ No session found for $target_repo"
+    return 1
+  fi
+
+  echo "✅ Resume: $target_repo (session $sid)"
+
+  cd "$DEV/$target_repo"
+  cmd_up "$sid"
+}
+
+# ============================================
+# dispatch
+# ============================================
+case "${1:-}" in
+  start)  cmd_start_v18 "$2" ;;
+  lang)   cmd_lang "$2" ;;
+  doctor) cmd_doctor ;;
+  up)     cmd_up "$2" ;;
+  stop)   cmd_stop_v17 ;;
+  list)   cmd_list ;;
+  *)      usage ;;
+esac
