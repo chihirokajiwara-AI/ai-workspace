@@ -38,7 +38,7 @@ journal_push(){
 
 usage(){
   cat <<USAGE
-DevOS v1.5
+DevOS v1.6
 
 Start:
   dev up 1     ← 毎朝これだけ
@@ -142,7 +142,39 @@ cmd_doctor(){
   fi
 }
 
+# ============================================
+# v1.6 language config
+# ============================================
+CONFIG="$HOME/.devos_config.json"
+
+load_lang(){
+  if [ -f "$CONFIG" ]; then
+    LANG_MODE=$(jq -r '.lang // "ja"' "$CONFIG" 2>/dev/null || echo "ja")
+  else
+    LANG_MODE="ja"
+  fi
+}
+
+set_lang(){
+  mkdir -p "$(dirname "$CONFIG")"
+  echo "{\"lang\":\"$1\"}" > "$CONFIG"
+  echo "✅ Language set to: $1"
+}
+
+cmd_start(){
+  cmd_up "$1"
+}
+
+cmd_lang(){
+  case "${1:-}" in
+    ja|en) set_lang "$1" ;;
+    *) echo "Usage: dev lang ja|en" ;;
+  esac
+}
+
 case "${1:-}" in
+  start)  cmd_start "$2" ;;
+  lang)   cmd_lang "$2" ;;
   doctor) cmd_doctor ;;
   up)     cmd_up "$2" ;;
   stop)   cmd_stop ;;
