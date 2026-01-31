@@ -38,7 +38,7 @@ journal_push(){
 
 usage(){
   cat <<USAGE
-DevOS v1.8
+DevOS v1.9
 
 Start:
   dev up 1     ← 毎朝これだけ
@@ -79,6 +79,7 @@ cmd_up(){
 
   cd "$DEV/$REPO"
   git fetch --all --prune 2>/dev/null || true
+  git pull --ff-only 2>/dev/null || echo "⚠️  Pull skipped (non-fast-forward) — run git pull manually"
   git checkout "$BRANCH" 2>/dev/null || git checkout -b "$BRANCH" "origin/$BRANCH" || true
 
   touch "$SESSION_FLAG"
