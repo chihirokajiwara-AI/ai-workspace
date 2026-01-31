@@ -38,7 +38,7 @@ journal_push(){
 
 usage(){
   cat <<USAGE
-DevOS v1.9
+DevOS v2.0
 
 Start:
   dev up 1     ← 毎朝これだけ
@@ -286,6 +286,7 @@ get_session_index_for_repo(){
 
 # v1.8 start
 cmd_start_v18(){
+  git -C "$DEV/ai-workspace" pull --ff-only 2>/dev/null || true
   ensure_journal
 
   local arg="${1:-}"
